@@ -152,7 +152,9 @@ IMPORTER_MAP = {
     "MAXHILL TECHNOLOGIES": "MAXHILL TECHNOLOGIES",
     "SKODA AUTO VOLKSWAGEN INDIA PRIVATE LIMITED": "SKODA AUTO ( IMPORT )",
     "TESLA INDIA MOTORS AND ENERGY PRIVATE LIMITED": "TESLA INDIA",
-    "BHARTI AIRTEL LIMITED": "BHARTI AIRTEL"
+    "BHARTI AIRTEL LIMITED": "BHARTI AIRTEL",
+    "DUCATI INDIA PRIVATE LIMITED": "DUCATI INDIA PVT LTD",
+    "BHARTI HEXACOM LIMITED": "BHARTI HEXACOM LIMITED"
 }
 
 # ================================================================================
@@ -1072,7 +1074,7 @@ def start_gui():
     FONT_SMALL = ("Segoe UI", 9)
 
     root = tk.Tk()
-    root.title("Unified File Manager System")
+    root.title("Unified File Manager System V3")
     root.geometry("950x700")
     root.configure(bg=COLORS["bg"])
     
@@ -1174,8 +1176,50 @@ def start_gui():
 
 
     # --- MAIN CONTENT ---
-    main_frame = tk.Frame(root, bg=COLORS["bg"])
-    main_frame.pack(fill="both", expand=True)
+    # --- MAIN CONTENT (SCROLLABLE) ---
+    container = tk.Frame(root, bg=COLORS["bg"])
+    container.pack(fill="both", expand=True)
+
+    # Canvas and Scrollbar
+    canvas = tk.Canvas(container, bg=COLORS["bg"], highlightthickness=0)
+    scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+    
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    canvas.configure(yscrollcommand=scrollbar.set)
+    
+    # Inner Frame
+    main_frame = tk.Frame(canvas, bg=COLORS["bg"])
+    canvas.create_window((0, 0), window=main_frame, anchor="nw", tags="inner_frame")
+
+    # Configure Scrolling
+    def on_canvas_configure(event):
+        # Allow the inner frame to expand to fill the canvas width
+        canvas.itemconfig("inner_frame", width=event.width)
+    
+    def on_frame_configure(event):
+        # Set the scroll region to encompass the inner frame
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    canvas.bind("<Configure>", on_canvas_configure)
+    main_frame.bind("<Configure>", on_frame_configure)
+
+    # Mousewheel Binding
+    def _on_mousewheel(event):
+        if canvas.winfo_exists():
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _bind_mousewheel(event):
+        if container.winfo_exists():
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+    
+    def _unbind_mousewheel(event):
+        if container.winfo_exists():
+             canvas.unbind_all("<MouseWheel>")
+
+    container.bind('<Enter>', _bind_mousewheel)
+    container.bind('<Leave>', _unbind_mousewheel)
 
     # --- SECTION 1: WATCHER CONTROLS & STATUS ---
     watcher_card = create_card(main_frame, "Watcher Monitor & Controls")
