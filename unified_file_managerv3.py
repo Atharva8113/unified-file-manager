@@ -1,51 +1,34 @@
-"""
+r"""
 ================================================================================
                     UNIFIED FILE MANAGER SYSTEM
 ================================================================================
 This script combines three file management functionalities into one unified system:
 
-1. OOC FILE UPLOADER (formerly Moving_Occ1.py)
-   - Monitors the Upload_ooc folder for PDF files
+1. OOC FILE UPLOADER
+   - Monitors Upload_ooc folders for PDF files
    - Extracts job number (IR_xxxxx) from filename
    - Moves files to corresponding job folders
    
-2. JOB FOLDER MOVER (formerly auto_move_job_foldersAll.py)
+2. JOB FOLDER MOVER
    - Monitors job folders for OOC/OUT OF CHARGE trigger PDFs
    - Extracts importer name from PDF content
    - Moves entire job folder to appropriate billing folder
    
-3. LOOSE FILE ORGANIZER (formerly MOVING_loose_files.py)
+3. LOOSE FILE ORGANIZER
    - Monitors billing company folders for loose files
    - Matches files to job folders based on job number in filename
    - Moves loose files into their matching job folders
 
-NOTE: File renaming feature is a separate script (auto_rename_on_startup.pyw)
-      that runs silently on Windows startup.
+NOTE: This version supports MULTIPLE YEARS simultaneously.
 
 ================================================================================
                         CONFIGURATION SECTION
 ================================================================================
-Modify these settings according to your folder structure:
+Modify MONITORED_YEARS to add or remove years:
 
-SOURCE_BASE     : Main folder containing job folders (e.g., Y:\E SANCHIT 25-26)
-UPLOAD_OOC      : Folder where OOC files are uploaded for processing
-BILLING_BASE    : Base billing folder (e.g., Z:\BILLING 2025-2026)
-LOG_DIR         : Folder where all logs are stored
-SCAN_INTERVAL   : How often to scan folders (in seconds)
-
-================================================================================
-                        HOW IT WORKS
-================================================================================
-
-WORKFLOW 1: OOC File Upload
-   Upload_ooc/file.pdf → Extract IR_xxxxx → Move to SOURCE_BASE/IRxxxxx/
-
-WORKFLOW 2: Job Folder Move
-   SOURCE_BASE/IRxxxxx/ (with OOC PDF) → Extract Importer → Move to BILLING_BASE/Company/
-
-WORKFLOW 3: Loose File Organization
-   BILLING_BASE/Company/loose_file.pdf → Extract job number → Move to Company/IRxxxxx/
-
+MONITORED_YEARS : List of dictionaries containing paths for each fiscal year.
+LOG_DIR         : Central folder where all logs are stored.
+SCAN_INTERVAL   : How often to scan folders (in seconds).
 ================================================================================
 """
 
@@ -78,17 +61,24 @@ from tkinter import messagebox, ttk
 #                           CONFIGURATION
 # ================================================================================
 
-# Main source folder containing job folders
-SOURCE_BASE = r"Y:\E SANCHIT 25-26"
+# Configuration for multiple years
+MONITORED_YEARS = [
+    {
+        "year": "2025-2026",
+        "source": r"Y:\E SANCHIT 25-26",
+        "billing": r"Z:\BILLING 2025-2026",
+        "upload_ooc": r"Y:\E SANCHIT 25-26\Upload_ooc"
+    },
+    {
+        "year": "2026-2027",
+        "source": r"Y:\E SANCHIT 26-27",
+        "billing": r"Z:\BILLING 2026-2027",
+        "upload_ooc": r"Y:\E SANCHIT 26-27\Upload_ooc"
+    }
+]
 
-# Folder where OOC files are uploaded (inside SOURCE_BASE)
-UPLOAD_OOC = os.path.join(SOURCE_BASE, "Upload_ooc")
-
-# Billing base folder
-BILLING_BASE = r"Z:\BILLING 2025-2026"
-
-# Log directory - stores all logs for the system
-LOG_DIR = r"Z:\BILLING 2025-2026\Automation Logs"
+# Central Log directory - stores all logs for the system
+LOG_DIR = r"Z:\BILLING 2026-2027\Automation Logs"
 
 # Log files
 MOVE_LOG = os.path.join(LOG_DIR, "job_move_log.csv")
@@ -164,13 +154,16 @@ IMPORTER_MAP = {
 def ensure_directories_and_logs():
     """Create necessary directories and initialize log files if they don't exist"""
     os.makedirs(LOG_DIR, exist_ok=True)
-    os.makedirs(UPLOAD_OOC, exist_ok=True)
+    
+    # Ensure all Upload_ooc folders exist
+    for config in MONITORED_YEARS:
+        os.makedirs(config["upload_ooc"], exist_ok=True)
     
     # Initialize job move log
     if not os.path.exists(MOVE_LOG):
         with open(MOVE_LOG, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
-                "Timestamp", "Job No", "Importer", "Billing Folder",
+                "Timestamp", "Year", "Job No", "Importer", "Billing Folder",
                 "Trigger File", "Action", "Comments"
             ])
     
@@ -178,21 +171,21 @@ def ensure_directories_and_logs():
     if not os.path.exists(REVERT_LOG):
         with open(REVERT_LOG, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
-                "Job No", "Original Path", "Moved Path", "Timestamp"
+                "Job No", "Year", "Original Path", "Moved Path", "Timestamp"
             ])
     
     # Initialize OOC upload log
     if not os.path.exists(OOC_UPLOAD_LOG):
         with open(OOC_UPLOAD_LOG, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
-                "Timestamp", "Filename", "Job No", "Destination Path", "Status"
+                "Timestamp", "Year", "Filename", "Job No", "Destination Path", "Status"
             ])
     
     # Initialize loose file log
     if not os.path.exists(LOOSE_FILE_LOG):
         with open(LOOSE_FILE_LOG, "w", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
-                "Timestamp", "Company Folder", "Filename", "Source Path",
+                "Timestamp", "Year", "Company Folder", "Filename", "Source Path",
                 "Destination Path", "Status"
             ])
 
@@ -278,13 +271,13 @@ def find_matching_job_folder(company_path, job_number):
 ooc_upload_running = False
 ooc_upload_stats = {"moved": 0, "skipped": 0, "errors": 0}
 
-def log_ooc_upload(filename, job_no, dest_path, status):
+def log_ooc_upload(year, filename, job_no, dest_path, status):
     """Log OOC upload operation"""
     try:
         with open(OOC_UPLOAD_LOG, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                filename, job_no, dest_path, status
+                year, filename, job_no, dest_path, status
             ])
     except Exception as e:
         print(f"[ERROR] Failed to write OOC upload log: {e}")
@@ -292,80 +285,73 @@ def log_ooc_upload(filename, job_no, dest_path, status):
 
 def watcher_ooc_upload():
     """
-    Watches Upload_ooc folder for PDF files
+    Watches Upload_ooc folders for PDF files
     Extracts job number (IR_xxxxx) from filename
     Moves file to corresponding job folder
     """
     global ooc_upload_running, ooc_upload_stats
     print(">>> OOC Upload Watcher Started <<<")
     
-    if not os.path.exists(UPLOAD_OOC):
-        print(f"[ERROR] Upload_ooc folder does not exist: {UPLOAD_OOC}")
-        ooc_upload_running = False
-        return
-    
     # Pattern to extract IR_xxxxx from filename
     ir_pattern = re.compile(r"IR[_\s-]?(\d{5})", re.IGNORECASE)
     
     while ooc_upload_running:
         try:
-            for filename in os.listdir(UPLOAD_OOC):
-                file_path = os.path.join(UPLOAD_OOC, filename)
+            for config in MONITORED_YEARS:
+                year = config["year"]
+                upload_dir = config["upload_ooc"]
+                source_base = config["source"]
                 
-                # Skip directories
-                if os.path.isdir(file_path):
+                if not os.path.exists(upload_dir):
                     continue
                 
-                # Only process PDF files
-                if not filename.lower().endswith(".pdf"):
-                    continue
-                
-                # Extract job number from filename
-                match = ir_pattern.search(filename)
-                if not match:
-                    print(f"[SKIP] No IR_xxxxx pattern in: {filename}")
-                    ooc_upload_stats["skipped"] += 1
-                    continue
-                
-                # Format as IRxxxxx
-                job_no = f"IR{match.group(1)}"
-                job_folder = os.path.join(SOURCE_BASE, job_no)
-                
-                print(f"[DEBUG] Extracted job: {job_no} from: {filename}")
-                
-                # Check if job folder exists
-                if not os.path.exists(job_folder):
-                    # Try to find folder that contains the job number
-                    found = False
-                    for folder in os.listdir(SOURCE_BASE):
-                        folder_path = os.path.join(SOURCE_BASE, folder)
-                        if os.path.isdir(folder_path) and job_no.upper() in folder.upper():
-                            job_folder = folder_path
-                            found = True
-                            break
+                for filename in os.listdir(upload_dir):
+                    file_path = os.path.join(upload_dir, filename)
                     
-                    if not found:
-                        print(f"[ERROR] Job folder not found: {job_no}")
-                        log_ooc_upload(filename, job_no, "", "ERROR: Folder not found")
-                        ooc_upload_stats["errors"] += 1
+                    if os.path.isdir(file_path):
                         continue
-                
-                # Move file to job folder
-                dest_path = os.path.join(job_folder, filename)
-                dest_path = unique_filename(dest_path)
-                
-                try:
-                    shutil.move(file_path, dest_path)
-                    log_ooc_upload(filename, job_no, dest_path, "MOVED")
-                    ooc_upload_stats["moved"] += 1
-                    print(f"[MOVED] {filename} → {job_folder}")
-                except Exception as e:
-                    print(f"[ERROR] Failed to move {filename}: {e}")
-                    log_ooc_upload(filename, job_no, "", f"ERROR: {e}")
-                    ooc_upload_stats["errors"] += 1
+                    
+                    if not filename.lower().endswith(".pdf"):
+                        continue
+                    
+                    match = ir_pattern.search(filename)
+                    if not match:
+                        continue
+                    
+                    job_no = f"IR{match.group(1)}"
+                    job_folder = os.path.join(source_base, job_no)
+                    
+                    if not os.path.exists(job_folder):
+                        found = False
+                        # List potential folders in source_base
+                        try:
+                            for folder in os.listdir(source_base):
+                                folder_path = os.path.join(source_base, folder)
+                                if os.path.isdir(folder_path) and job_no.upper() in folder.upper():
+                                    job_folder = folder_path
+                                    found = True
+                                    break
+                        except: pass
+                        
+                        if not found:
+                            log_ooc_upload(year, filename, job_no, "", "ERROR: Folder not found")
+                            ooc_upload_stats["errors"] += 1
+                            continue
+                    
+                    dest_path = os.path.join(job_folder, filename)
+                    dest_path = unique_filename(dest_path)
+                    
+                    try:
+                        shutil.move(file_path, dest_path)
+                        log_ooc_upload(year, filename, job_no, dest_path, "MOVED")
+                        ooc_upload_stats["moved"] += 1
+                        print(f"[{year}] [MOVED] {filename} → {job_no}")
+                    except Exception as e:
+                        log_ooc_upload(year, filename, job_no, "", f"ERROR: {e}")
+                        ooc_upload_stats["errors"] += 1
         
         except Exception as e:
-            print(f"[ERROR] OOC Upload watcher error: {e}")
+            print(f"[ERROR] OOC Upload watcher loop error: {e}")
             ooc_upload_stats["errors"] += 1
         
         time.sleep(OOC_UPLOAD_INTERVAL)
@@ -379,31 +365,31 @@ def watcher_ooc_upload():
 job_move_running = False
 job_move_stats = {"moved": 0, "skipped": 0, "errors": 0}
 
-def log_job_move(job_no, importer, billing_folder, trigger_file, action, comments):
+def log_job_move(year, job_no, importer, billing_folder, trigger_file, action, comments):
     """Log job move operation"""
     try:
         with open(MOVE_LOG, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                job_no, importer, billing_folder, trigger_file, action, comments
+                year, job_no, importer, billing_folder, trigger_file, action, comments
             ])
     except Exception as e:
         print(f"[ERROR] Failed to write job move log: {e}")
 
 
-def log_revert(job_no, original_path, moved_path):
+def log_revert(year, job_no, original_path, moved_path):
     """Log revert information for undo capability"""
     try:
         with open(REVERT_LOG, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
-                job_no, original_path, moved_path,
+                job_no, year, original_path, moved_path,
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             ])
     except Exception as e:
         print(f"[ERROR] Failed to write revert log: {e}")
 
 
-def move_folder(src, dest_parent):
+def move_folder(year, src, dest_parent):
     """Move folder to destination, handling duplicates"""
     job = os.path.basename(src)
     dest = os.path.join(dest_parent, job)
@@ -414,23 +400,23 @@ def move_folder(src, dest_parent):
         dest = dest + "_" + datetime.now().strftime("%Y%m%d%H%M%S")
     
     shutil.move(src, dest)
-    log_revert(job, src, dest)
+    log_revert(year, job, src, dest)
     
     return dest
 
 
-def log_revert_history(job_no, reverted_from, reverted_to, status):
+def log_revert_history(year, job_no, reverted_from, reverted_to, status):
     """Log successful revert operation to history log"""
     try:
         # Create file with header if it doesn't exist
         if not os.path.exists(REVERT_HISTORY_LOG):
             with open(REVERT_HISTORY_LOG, "w", newline="", encoding="utf-8") as f:
-                csv.writer(f).writerow(["Timestamp", "Job", "Reverted From", "Reverted To", "Status"])
+                csv.writer(f).writerow(["Timestamp", "Year", "Job", "Reverted From", "Reverted To", "Status"])
         
         with open(REVERT_HISTORY_LOG, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                job_no, reverted_from, reverted_to, status
+                year, job_no, reverted_from, reverted_to, status
             ])
     except Exception as e:
         print(f"[ERROR] Failed to write revert history log: {e}")
@@ -455,7 +441,7 @@ def revert_job(job_no):
         rows = all_rows[1:]
         
         # Find all matches for this job number
-        matches = [r for r in rows if r and len(r) >= 3 and r[0] == job_no]
+        matches = [r for r in rows if r and len(r) >= 4 and r[0] == job_no]
         
         if not matches:
             print(f"[REVERT] No entry found for job: {job_no}")
@@ -463,24 +449,25 @@ def revert_job(job_no):
         
         # Get the last (most recent) entry
         last = matches[-1]
-        original = last[1]  # Original path (where it was moved FROM)
-        moved = last[2]     # Moved path (where it was moved TO)
+        year_val = last[1]  # Year (Added)
+        original = last[2]  # Original path
+        moved = last[3]     # Moved path
         
-        print(f"[REVERT] Job: {job_no}")
+        print(f"[REVERT] Job: {job_no} ({year_val})")
         print(f"[REVERT] Original path: {original}")
         print(f"[REVERT] Moved path: {moved}")
         
         # Check if folder exists at moved location
         if not os.path.exists(moved):
             print(f"[REVERT] ERROR: Folder not found at moved location: {moved}")
-            log_revert_history(job_no, moved, original, "FAILED: Folder not at moved location")
+            log_revert_history(year_val, job_no, moved, original, "FAILED: Folder not at moved location")
             return f"Folder no longer exists at: {moved}"
         
         # Check if original parent directory exists
         original_parent = os.path.dirname(original)
         if not os.path.exists(original_parent):
             print(f"[REVERT] ERROR: Original parent directory doesn't exist: {original_parent}")
-            log_revert_history(job_no, moved, original, "FAILED: Original directory missing")
+            log_revert_history(year_val, moved, original, "FAILED: Original directory missing")
             return f"Original directory doesn't exist: {original_parent}"
         
         # Store original destination for logging
@@ -499,133 +486,97 @@ def revert_job(job_no):
         print(f"[REVERT] SUCCESS: Reverted {job_no} to {final_destination}")
         
         # Log successful revert to history
-        log_revert_history(job_no, moved, final_destination, "SUCCESS")
+        log_revert_history(year_val, job_no, moved, final_destination, "SUCCESS")
         
         return f"Reverted successfully to {final_destination}"
     
     except PermissionError as e:
         print(f"[REVERT] PERMISSION ERROR: {e}")
-        log_revert_history(job_no, "Unknown", "Unknown", f"FAILED: Permission denied - {e}")
+        log_revert_history("Unknown", job_no, "Unknown", "Unknown", f"FAILED: Permission denied - {e}")
         return f"Permission denied: {e}"
     except Exception as e:
         print(f"[REVERT] ERROR: {e}")
-        log_revert_history(job_no, "Unknown", "Unknown", f"FAILED: {e}")
+        log_revert_history("Unknown", job_no, "Unknown", "Unknown", f"FAILED: {e}")
         return f"Error reverting: {e}"
 
 
 def watcher_job_move():
     """
     Watches job folders for OOC trigger files
-    Uses DIRECT FILE SEARCH for speed (instead of scanning all folders)
+    Uses DIRECT FILE SEARCH for speed
     Extracts importer from PDF content
     Moves entire job folder to billing folder
     """
     global job_move_running, job_move_stats
     print(">>> Job Folder Mover Watcher Started <<<")
-    print("[INFO] Using optimized direct file search method")
-    
-    if not os.path.exists(SOURCE_BASE):
-        print(f"[ERROR] Source path does not exist: {SOURCE_BASE}")
-        job_move_running = False
-        return
-    
-    if not os.path.exists(BILLING_BASE):
-        print(f"[ERROR] Billing path does not exist: {BILLING_BASE}")
-        job_move_running = False
-        return
-    
-    # Build glob patterns for trigger files (both underscore and space variants)
-    trigger_patterns = [
-        os.path.join(SOURCE_BASE, "*", "Out_of_Charge_IR_*.pdf"),
-        os.path.join(SOURCE_BASE, "*", "Out of Charge_IR_*.pdf"),
-    ]
-    
     import glob
     
     while job_move_running:
         try:
-            # Direct search for trigger files (FAST!)
-            trigger_files = []
-            for pattern in trigger_patterns:
-                trigger_files.extend(glob.glob(pattern))
-            
-            for trigger_path in trigger_files:
-                try:
-                    # Get job folder path (parent of trigger file)
-                    job_path = os.path.dirname(trigger_path)
-                    job = os.path.basename(job_path)
-                    trigger = os.path.basename(trigger_path)
-                    
-                    # Skip Upload_ooc folder
-                    if job.lower() == "upload_ooc":
-                        continue
-                    
-                    # Skip if folder no longer exists (already moved)
-                    if not os.path.exists(job_path):
-                        continue
-                    
-                    print(f"[FOUND] Trigger file: {trigger} in {job}")
-                    
-                    # Extract text from PDF
-                    text = extract_text_from_pdf(trigger_path)
-                    
-                    if not text:
-                        print(f"[SKIP] Could not extract text from: {trigger}")
-                        log_job_move(job, "", "", trigger, "SKIPPED", 
-                                   "Could not extract text from PDF")
-                        job_move_stats["skipped"] += 1
-                        continue
-                    
-                    # Find importer
-                    importer = find_importer(text)
-                    
-                    if not importer:
-                        print(f"[SKIP] No matching importer found in: {trigger}")
-                        log_job_move(job, "", "", trigger, "SKIPPED", 
-                                   "No matching importer found in PDF")
-                        job_move_stats["skipped"] += 1
-                        continue
-                    
-                    # Get billing folder name
-                    billing_folder = IMPORTER_MAP.get(importer)
-                    if not billing_folder:
-                        print(f"[SKIP] No billing folder mapping for: {importer}")
-                        log_job_move(job, importer, "", trigger, "SKIPPED", 
-                                   "No billing folder mapping found")
-                        job_move_stats["skipped"] += 1
-                        continue
-                    
-                    # Move folder to billing
-                    dest_parent = os.path.join(BILLING_BASE, billing_folder)
-                    
-                    try:
-                        final_path = move_folder(job_path, dest_parent)
-                        log_job_move(job, importer, billing_folder, trigger, "MOVED",
-                                   f"Moved to {final_path}")
-                        job_move_stats["moved"] += 1
-                        print(f"[MOVED] {job} → {billing_folder}")
-                    
-                    except PermissionError as e:
-                        print(f"[ERROR] Permission denied moving {job}: {e}")
-                        log_job_move(job, importer, billing_folder, trigger, "ERROR",
-                                   f"Permission denied: {e}")
-                        job_move_stats["errors"] += 1
-                    
-                    except Exception as e:
-                        print(f"[ERROR] Failed to move {job}: {e}")
-                        log_job_move(job, importer, billing_folder, trigger, "ERROR",
-                                   f"Move failed: {e}")
-                        job_move_stats["errors"] += 1
+            for config in MONITORED_YEARS:
+                year = config["year"]
+                source_base = config["source"]
+                billing_base = config["billing"]
                 
-                except Exception as e:
-                    print(f"[ERROR] Error processing {trigger_path}: {e}")
-                    log_job_move(os.path.basename(os.path.dirname(trigger_path)), 
-                               "", "", os.path.basename(trigger_path), "ERROR",
-                               f"Processing error: {e}")
-                    job_move_stats["errors"] += 1
+                if not os.path.exists(source_base):
+                    continue
+                
+                # Build glob patterns for trigger files
+                trigger_patterns = [
+                    os.path.join(source_base, "*", "Out_of_Charge_IR_*.pdf"),
+                    os.path.join(source_base, "*", "Out of Charge_IR_*.pdf"),
+                ]
+                
+                trigger_files = []
+                for pattern in trigger_patterns:
+                    trigger_files.extend(glob.glob(pattern))
+                
+                for trigger_path in trigger_files:
+                    try:
+                        job_path = os.path.dirname(trigger_path)
+                        job = os.path.basename(job_path)
+                        trigger = os.path.basename(trigger_path)
+                        
+                        if job.lower() == "upload_ooc":
+                            continue
+                        
+                        if not os.path.exists(job_path):
+                            continue
+                        
+                        text = extract_text_from_pdf(trigger_path)
+                        if not text:
+                            log_job_move(year, job, "", "", trigger, "SKIPPED", "Could not extract text")
+                            job_move_stats["skipped"] += 1
+                            continue
+                        
+                        importer = find_importer(text)
+                        if not importer:
+                            log_job_move(year, job, "", "", trigger, "SKIPPED", "No matching importer")
+                            job_move_stats["skipped"] += 1
+                            continue
+                        
+                        billing_folder = IMPORTER_MAP.get(importer)
+                        if not billing_folder:
+                            log_job_move(year, job, importer, "", trigger, "SKIPPED", "No mapping found")
+                            job_move_stats["skipped"] += 1
+                            continue
+                        
+                        dest_parent = os.path.join(billing_base, billing_folder)
+                        try:
+                            final_path = move_folder(year, job_path, dest_parent)
+                            log_job_move(year, job, importer, billing_folder, trigger, "MOVED", f"Moved to {final_path}")
+                            job_move_stats["moved"] += 1
+                            print(f"[{year}] [MOVED] {job} → {billing_folder}")
+                        except Exception as e:
+                            log_job_move(year, job, importer, billing_folder, trigger, "ERROR", f"Move failed: {e}")
+                            job_move_stats["errors"] += 1
+                            
+                    except Exception as e:
+                        print(f"[ERROR] Error processing {trigger_path}: {e}")
+                        job_move_stats["errors"] += 1
         
         except Exception as e:
-            print(f"[ERROR] Job mover watcher error: {e}")
+            print(f"[ERROR] Job mover watcher loop error: {e}")
             job_move_stats["errors"] += 1
         
         time.sleep(JOB_MOVE_INTERVAL)
@@ -639,13 +590,13 @@ def watcher_job_move():
 loose_file_running = False
 loose_file_stats = {"moved": 0, "skipped": 0, "errors": 0}
 
-def log_loose_file(company, filename, source, dest, status):
+def log_loose_file(year, company, filename, source, dest, status):
     """Log loose file organization"""
     try:
         with open(LOOSE_FILE_LOG, "a", newline="", encoding="utf-8") as f:
             csv.writer(f).writerow([
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                company, filename, source, dest, status
+                year, company, filename, source, dest, status
             ])
     except Exception as e:
         print(f"[ERROR] Failed to write loose file log: {e}")
@@ -660,72 +611,63 @@ def watcher_loose_files():
     global loose_file_running, loose_file_stats
     print(">>> Loose File Organizer Watcher Started <<<")
     
-    if not os.path.exists(BILLING_BASE):
-        print(f"[ERROR] Billing path does not exist: {BILLING_BASE}")
-        loose_file_running = False
-        return
-    
     while loose_file_running:
         try:
-            for company_folder in os.listdir(BILLING_BASE):
-                company_path = os.path.join(BILLING_BASE, company_folder)
+            for config in MONITORED_YEARS:
+                year = config["year"]
+                billing_base = config["billing"]
                 
-                # Skip if not a directory or if it's a system/excluded folder
-                if not os.path.isdir(company_path):
+                if not os.path.exists(billing_base):
                     continue
                 
-                # Folders to skip (don't scan for loose files)
-                skip_folders = [
-                    "BILL RECEVING COPY",
-                    "BHARTI AIRTEL  AIFTA",
-                    "Automation Logs",
-                    "AUTO_SCRIPT",
-                    "File_Organization_Logs"
-                ]
-                if company_folder in skip_folders:
-                    continue
-                
-                # Look for loose files
-                for item in os.listdir(company_path):
-                    item_path = os.path.join(company_path, item)
+                for company_folder in os.listdir(billing_base):
+                    company_path = os.path.join(billing_base, company_folder)
                     
-                    # Skip directories
-                    if os.path.isdir(item_path):
+                    if not os.path.isdir(company_path):
                         continue
                     
-                    # Check file extension
-                    _, ext = os.path.splitext(item)
-                    if ext.lower() not in MONITORED_EXTENSIONS:
+                    # Folders to skip
+                    skip_folders = [
+                        "BILL RECEVING COPY",
+                        "BHARTI AIRTEL  AIFTA",
+                        "Automation Logs",
+                        "AUTO_SCRIPT",
+                        "File_Organization_Logs"
+                    ]
+                    if company_folder in skip_folders:
                         continue
                     
-                    # Extract job number from filename
-                    job_number = extract_job_number(item)
-                    
-                    if not job_number:
-                        continue
-                    
-                    # Find matching job folder
-                    job_folder_path = find_matching_job_folder(company_path, job_number)
-                    
-                    if not job_folder_path:
-                        print(f"[KEEP] No matching folder for {job_number} in {company_folder}")
-                        continue
-                    
-                    # Move file to job folder
-                    dest_path = unique_filename(os.path.join(job_folder_path, item))
-                    
-                    try:
-                        shutil.move(item_path, dest_path)
-                        log_loose_file(company_folder, item, item_path, dest_path, "MOVED")
-                        loose_file_stats["moved"] += 1
-                        print(f"[MOVED] {item} → {os.path.basename(job_folder_path)}")
-                    except Exception as e:
-                        print(f"[ERROR] Failed to move {item}: {e}")
-                        log_loose_file(company_folder, item, item_path, "", f"ERROR: {e}")
-                        loose_file_stats["errors"] += 1
+                    # Look for loose files
+                    for item in os.listdir(company_path):
+                        item_path = os.path.join(company_path, item)
+                        
+                        if os.path.isdir(item_path):
+                            continue
+                        
+                        _, ext = os.path.splitext(item)
+                        if ext.lower() not in MONITORED_EXTENSIONS:
+                            continue
+                        
+                        job_number = extract_job_number(item)
+                        if not job_number:
+                            continue
+                        
+                        job_folder_path = find_matching_job_folder(company_path, job_number)
+                        if not job_folder_path:
+                            continue
+                        
+                        dest_path = unique_filename(os.path.join(job_folder_path, item))
+                        try:
+                            shutil.move(item_path, dest_path)
+                            log_loose_file(year, company_folder, item, item_path, dest_path, "MOVED")
+                            loose_file_stats["moved"] += 1
+                            print(f"[{year}] [MOVED LOOSE] {item} → {os.path.basename(job_folder_path)}")
+                        except Exception as e:
+                            log_loose_file(year, company_folder, item, item_path, "", f"ERROR: {e}")
+                            loose_file_stats["errors"] += 1
         
         except Exception as e:
-            print(f"[ERROR] Loose file watcher error: {e}")
+            print(f"[ERROR] Loose file watcher loop error: {e}")
             loose_file_stats["errors"] += 1
         
         time.sleep(LOOSE_FILE_INTERVAL)
@@ -840,7 +782,7 @@ def open_revert_gui():
     scrollbar = ttk.Scrollbar(table_frame, orient="vertical")
     scrollbar.pack(side="right", fill="y")
     
-    columns = ("☑", "Job", "Original", "Moved", "Time")
+    columns = ("☑", "Job", "Year", "Original", "Moved", "Time")
     table = ttk.Treeview(table_frame, columns=columns, show="tree headings",
                          selectmode="extended", yscrollcommand=scrollbar.set)
     scrollbar.config(command=table.yview)
@@ -852,7 +794,7 @@ def open_revert_gui():
     
     for c in columns[1:]:
         table.heading(c, text=c)
-        table.column(c, width=220)
+        table.column(c, width=180 if c in ["Original", "Moved"] else 100)
     
     table.pack(side="left", fill="both", expand=True)
     
@@ -863,11 +805,12 @@ def open_revert_gui():
     checkbox_states = {}
     
     def check_status(row):
-        if not row or len(row) < 3:
+        if not row or len(row) < 4:
             return None
-        if os.path.exists(row[1]):
+        # Indices: Job(0), Year(1), Original(2), Moved(3), Timestamp(4)
+        if os.path.exists(row[2]):
             return True  # Reverted
-        elif os.path.exists(row[2]):
+        elif os.path.exists(row[3]):
             return False  # Not reverted
         return None
     
@@ -1357,21 +1300,21 @@ def start_gui():
     btn_style = {"bg": "#e3f2fd", "fg": COLORS["primary"], "font": FONT_BODY, "width": 20, "relief": "flat"}
     
     create_hover_button(logs_card, "📄 OOC Upload Log", 
-        lambda: open_log_viewer(OOC_UPLOAD_LOG, "OOC Upload Log", ("Timestamp", "Filename", "Job No", "Destination", "Status")),
+        lambda: open_log_viewer(OOC_UPLOAD_LOG, "OOC Upload Log", ("Timestamp", "Year", "Filename", "Job No", "Destination", "Status")),
         **btn_style).grid(row=0, column=0, padx=10, pady=5)
 
     create_hover_button(logs_card, "📄 Job Move Log", 
-        lambda: open_log_viewer(MOVE_LOG, "Job Move Log", ("Timestamp", "Job", "Importer", "Folder", "Trigger", "Action", "Comments")),
+        lambda: open_log_viewer(MOVE_LOG, "Job Move Log", ("Timestamp", "Year", "Job", "Importer", "Folder", "Trigger", "Action", "Comments")),
         **btn_style).grid(row=0, column=1, padx=10, pady=5)
 
     create_hover_button(logs_card, "📄 Loose File Log", 
-        lambda: open_log_viewer(LOOSE_FILE_LOG, "Loose File Log", ("Timestamp", "Company", "Filename", "Source", "Destination", "Status")),
+        lambda: open_log_viewer(LOOSE_FILE_LOG, "Loose File Log", ("Timestamp", "Year", "Company", "Filename", "Source", "Destination", "Status")),
         **btn_style).grid(row=0, column=2, padx=10, pady=5)
 
     tk.Frame(logs_card, height=10, bg=COLORS["card_bg"]).grid(row=1, column=0) 
 
     create_hover_button(logs_card, "🕒 Revert History", 
-        lambda: open_log_viewer(REVERT_HISTORY_LOG, "Revert History Log", ("Timestamp", "Job", "Reverted From", "Reverted To", "Status")),
+        lambda: open_log_viewer(REVERT_HISTORY_LOG, "Revert History Log", ("Timestamp", "Year", "Job", "Reverted From", "Reverted To", "Status")),
         **btn_style).grid(row=2, column=0, padx=10, pady=5)
 
     create_hover_button(logs_card, "🔄 Open Revert Manager", open_revert_gui,
@@ -1381,8 +1324,8 @@ def start_gui():
     footer_frame = tk.Frame(root, bg=COLORS["bg"])
     footer_frame.pack(side="bottom", fill="x", pady=10)
     
-    path_text = f"Source: {SOURCE_BASE}  |  Billing: {BILLING_BASE}"
-    tk.Label(footer_frame, text=path_text, font=("Consolas", 8), bg=COLORS["bg"], fg=COLORS["text_secondary"]).pack()
+    summary = "Monitoring: " + " | ".join([c["year"] for c in MONITORED_YEARS])
+    tk.Label(footer_frame, text=summary, font=("Consolas", 8), bg=COLORS["bg"], fg=COLORS["text_secondary"]).pack()
     tk.Label(footer_frame, text="© Nagarkot Forwarders Pvt Ltd", font=("Segoe UI", 8), bg=COLORS["bg"], fg="#999").pack(pady=(2,0))
 
     root.mainloop()
